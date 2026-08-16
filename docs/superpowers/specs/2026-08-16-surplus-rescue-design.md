@@ -58,7 +58,10 @@ CREATE TABLE users (
   full_name VARCHAR(255),
   phone VARCHAR(20),
   avatar_url TEXT,
-  role VARCHAR(20) DEFAULT 'customer' CHECK (role IN ('customer', 'business', 'admin')),
+  role VARCHAR(20) DEFAULT 'customer' CHECK (role IN ('customer', 'business', 'admin', 'rider')),
+  is_available BOOLEAN DEFAULT TRUE,
+  current_latitude DECIMAL(10, 8),
+  current_longitude DECIMAL(11, 8),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -83,7 +86,6 @@ CREATE TABLE businesses (
   cover_image_url TEXT,
   is_verified BOOLEAN DEFAULT FALSE,
   is_active BOOLEAN DEFAULT TRUE,
-  delivery_radius_km DECIMAL(5, 2) DEFAULT 5.0,
   commission_rate DECIMAL(5, 2) DEFAULT 12.5,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -134,7 +136,8 @@ CREATE TABLE orders (
   business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
   mystery_bag_id UUID REFERENCES mystery_bags(id) ON DELETE CASCADE,
   time_slot_id UUID REFERENCES time_slots(id),
-  status VARCHAR(30) DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered', 'cancelled', 'refunded')),
+  rider_id UUID REFERENCES users(id),
+  status VARCHAR(30) DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'preparing', 'ready', 'picked_up', 'out_for_delivery', 'delivered', 'cancelled', 'refunded')),
   total_amount DECIMAL(10, 2) NOT NULL,
   commission_amount DECIMAL(10, 2) NOT NULL,
   business_payout DECIMAL(10, 2) NOT NULL,
@@ -143,7 +146,8 @@ CREATE TABLE orders (
   delivery_notes TEXT,
   special_requests TEXT,
   scheduled_pickup TIMESTAMP WITH TIME ZONE,
-  completed_at TIMESTAMP WITH TIME ZONE,
+  picked_up_at TIMESTAMP WITH TIME ZONE,
+  delivered_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -212,10 +216,28 @@ CREATE TABLE notifications (
 );
 ```
 
+#### platform_settings
+```sql
+CREATE TABLE platform_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  setting_key VARCHAR(100) UNIQUE NOT NULL,
+  setting_value TEXT NOT NULL,
+  description TEXT,
+  updated_by UUID REFERENCES users(id),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Insert default delivery radius setting
+INSERT INTO platform_settings (setting_key, setting_value, description)
+VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
+```
+
 ### Row Level Security (RLS) Policies
 - Users can only view/update their own profile
 - Business owners can only manage their own businesses and mystery bags
 - Customers can only view their own orders
+- Riders can view orders assigned to them
 - Admins have full access to all tables
 - Public read access for active mystery bags and businesses
 
@@ -225,7 +247,7 @@ CREATE TABLE notifications (
 - Browse available mystery bags
 - Place orders with cash on delivery
 - Track order status
-- Rate and review businesses
+- Rate and review businesses and mystery bags
 - Manage profile and delivery addresses
 - View order history
 
@@ -233,24 +255,32 @@ CREATE TABLE notifications (
 - Create and manage business profile
 - Upload verification documents
 - Create/edit/delete mystery bags
-- Set delivery radius and time slots
-- View orders and update status
+- Set time slots
+- View orders and update preparation status
 - Respond to reviews
 - Purchase advertising spots
 - View analytics dashboard
 
+### Rider
+- View assigned delivery orders
+- Update order status (picked up, delivered)
+- View pickup and delivery addresses
+- Navigate to locations
+
 ### Admin
 - Verify business documents
-- Manage all users and businesses
+- Manage all users, businesses, and riders
 - Handle disputes and refunds
 - Manage advertising campaigns
+- Manage delivery operations
+- Configure platform settings (delivery radius, etc.)
 - View platform analytics
-- Configure system settings
 
 ## 5. Core Features
 
 ### 5.1 Mystery Bags System
-- **Secret Bags:** Customers don't know exact items, just category and value
+- **Blind Ordering:** Customers don't choose a specific business - they order by category and price range, and the platform matches them with available bags
+- **Secret Revealed on Delivery:** Customers only discover which business their order came from when it arrives
 - **Categories:** Mixed meals, Bakery, Grocery, Produce, Snacks, Beverages, Desserts
 - **Dynamic Pricing:** Business sets original value and selling price (discount %)
 - **Time-Limited:** Available only during specific time slots
@@ -263,22 +293,24 @@ CREATE TABLE notifications (
 - **Real-time Availability:** Updates as orders are placed
 
 ### 5.3 Order Flow
-1. Customer browses available mystery bags
-2. Selects bag and preferred time slot
+1. Customer browses mystery bags by category and price range
+2. Selects preferred time slot
 3. Confirms delivery address and notes
 4. Places order (Cash on Delivery)
-5. Business receives notification and confirms
-6. Business prepares order
-7. Order marked ready for pickup/delivery
-8. Customer receives order and pays cash
-9. Order marked delivered
-10. Customer can rate and review
+5. Platform matches order with available bag from a business
+6. Business receives notification and prepares order
+7. Platform rider picks up order from business
+8. Rider delivers to customer
+9. Customer receives order and pays cash
+10. Order marked delivered
+11. Customer can rate and review the business
 
 ### 5.4 Delivery Management
-- **Self-Delivery:** Businesses handle their own delivery
-- **Custom Radius:** Businesses set delivery radius in km
-- **Address Validation:** Ensure delivery address is within radius
-- **Delivery Instructions:** Customers can add special instructions
+- **Platform Delivery:** Platform manages its own delivery riders/drivers for pickup and delivery
+- **Business Role:** Businesses only prepare orders - no delivery management required
+- **Admin-Managed Radius:** Delivery radius managed by platform admin, not individual businesses
+- **Address Validation:** Ensure delivery address is within platform delivery radius
+- **Delivery Instructions:** Customers can add special instructions for riders
 
 ### 5.5 Payment System
 - **Cash on Delivery Only:** No online payment processing
@@ -287,6 +319,8 @@ CREATE TABLE notifications (
 - **Receipt Generation:** Digital receipts for all transactions
 
 ### 5.6 Review & Rating System
+- **Post-Delivery Reviews:** Customers can only review after receiving their order (when business is revealed)
+- **Business Profile Reviews:** Reviews displayed on business profiles
 - **5-Star Ratings:** Simple rating system
 - **Text Reviews:** Optional comments
 - **Anonymous Option:** Customers can review anonymously
@@ -307,11 +341,12 @@ CREATE TABLE notifications (
 - **Business Alerts:** New orders, reviews, document status
 
 ### 5.9 Admin Dashboard
-- **User Management:** View, edit, disable users
+- **User Management:** View, edit, disable users (including riders)
 - **Business Verification:** Review and approve documents
 - **Order Management:** View all orders, handle disputes
+- **Delivery Management:** Assign riders, manage delivery operations
+- **Platform Settings:** Configure delivery radius, commission rates, etc.
 - **Analytics:** Platform-wide metrics and reports
-- **Content Management:** Manage categories, settings
 
 ## 6. UI/UX Design
 
@@ -327,23 +362,23 @@ CREATE TABLE notifications (
 #### Homepage
 - Hero section with value proposition
 - Featured businesses carousel (paid advertising)
-- Available mystery bags grid
+- Mystery bags by category (not by business)
 - Search and filter options
 - Category navigation
 
-#### Business Listing
+#### Business Profile
 - Business profile with cover image
-- Mystery bags available
-- Time slots and delivery info
-- Reviews and ratings
+- Reviews and ratings (from customers who received orders)
+- Business information
 - Contact information
+- Time slots available
 
 #### Mystery Bag Detail
 - High-quality images
 - Category and value information
 - Original vs. selling price
 - Available time slots
-- Business information
+- Platform delivery info (not business info)
 - Add to order button
 
 #### Order Checkout
@@ -356,22 +391,29 @@ CREATE TABLE notifications (
 #### Order Tracking
 - Real-time status updates
 - Timeline visualization
-- Business contact info
+- Business name (revealed after delivery)
 - Delivery instructions
 
 #### Business Dashboard
 - Overview analytics
 - Mystery bag management
-- Order management
+- Order preparation management
 - Review responses
 - Advertising management
 
+#### Rider Dashboard
+- Assigned deliveries
+- Pickup/delivery addresses
+- Order status updates
+- Navigation integration
+
 #### Admin Dashboard
 - Platform metrics
-- User management
+- User management (including riders)
 - Business verification
 - Order disputes
-- System settings
+- Delivery management
+- Platform settings (delivery radius, etc.)
 
 ### Components
 - **Navigation:** Sticky header with search, cart, notifications
@@ -384,8 +426,9 @@ CREATE TABLE notifications (
 ## 7. API Structure
 
 ### Supabase Edge Functions
-- `create-order` - Process new orders
+- `create-order` - Process new orders and match with available bags
 - `update-order-status` - Update order status
+- `assign-rider` - Assign delivery rider to order
 - `calculate-commission` - Calculate platform commission
 - `send-notification` - Send email/push notifications
 - `verify-document` - Process document verification
@@ -484,6 +527,7 @@ surplus-rescue/
 │   │   ├── (dashboard)/
 │   │   │   ├── business/
 │   │   │   ├── admin/
+│   │   │   ├── rider/
 │   │   │   └── orders/
 │   │   ├── (marketplace)/
 │   │   │   ├── businesses/
@@ -498,6 +542,7 @@ surplus-rescue/
 │   │   ├── marketplace/
 │   │   ├── business/
 │   │   ├── admin/
+│   │   ├── rider/
 │   │   └── shared/
 │   ├── lib/
 │   │   ├── supabase/
