@@ -37,7 +37,7 @@ Surplus Rescue is a surplus food rescue marketplace web app where restaurants, c
 - **CI/CD:** GitHub Actions
 
 ### Architecture Pattern
-**Monolithic Next.js Application** - Single codebase with clear separation of concerns through feature-based folder structure.
+**Monolithic Next.js Application** - Single codebase with clear separation of concerns through feature-based folder structure. Uses Supabase client for database operations (no Prisma ORM).
 
 ### Color Palette
 - **Primary Background:** Cream (#FFFBF2) - 60%
@@ -282,7 +282,7 @@ CREATE TABLE notifications (
 
 ### 5.5 Payment System
 - **Cash on Delivery Only:** No online payment processing
-- **Commission Calculation:** Platform takes 10-15% per order
+- **Commission Calculation:** Platform takes 10-15% per order (configurable per business, default 12.5%)
 - **Business Payout:** Calculated after commission deduction
 - **Receipt Generation:** Digital receipts for all transactions
 
@@ -513,7 +513,6 @@ surplus-rescue/
 │   ├── integration/
 │   └── e2e/
 ├── docs/
-├── prisma/
 └── package.json
 ```
 
