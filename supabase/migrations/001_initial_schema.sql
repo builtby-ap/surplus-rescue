@@ -10,10 +10,7 @@ CREATE TABLE users (
   full_name VARCHAR(255),
   phone VARCHAR(20),
   avatar_url TEXT,
-  role VARCHAR(20) DEFAULT 'customer' CHECK (role IN ('customer', 'business', 'admin', 'rider')),
-  is_available BOOLEAN DEFAULT TRUE,
-  current_latitude DECIMAL(10, 8),
-  current_longitude DECIMAL(11, 8),
+  role VARCHAR(20) DEFAULT 'customer' CHECK (role IN ('customer', 'business', 'admin')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -37,6 +34,11 @@ CREATE TABLE businesses (
   is_verified BOOLEAN DEFAULT FALSE,
   is_active BOOLEAN DEFAULT TRUE,
   commission_rate DECIMAL(5, 2) DEFAULT 12.5,
+  offers_delivery BOOLEAN DEFAULT TRUE,
+  offers_pickup BOOLEAN DEFAULT TRUE,
+  delivery_radius_km DECIMAL(5, 2) DEFAULT 5.0,
+  delivery_fee DECIMAL(10, 2) DEFAULT 0.00,
+  minimum_order_for_delivery DECIMAL(10, 2) DEFAULT 0.00,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -80,9 +82,10 @@ CREATE TABLE orders (
   business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
   mystery_bag_id UUID REFERENCES mystery_bags(id) ON DELETE CASCADE,
   time_slot_id UUID REFERENCES time_slots(id),
-  rider_id UUID REFERENCES users(id),
+  fulfillment_type VARCHAR(20) DEFAULT 'pickup' CHECK (fulfillment_type IN ('delivery', 'pickup')),
   status VARCHAR(30) DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'preparing', 'ready', 'picked_up', 'out_for_delivery', 'delivered', 'cancelled', 'refunded')),
   total_amount DECIMAL(10, 2) NOT NULL,
+  delivery_fee DECIMAL(10, 2) DEFAULT 0.00,
   commission_amount DECIMAL(10, 2) NOT NULL,
   business_payout DECIMAL(10, 2) NOT NULL,
   payment_method VARCHAR(20) DEFAULT 'cash_on_delivery',
@@ -162,10 +165,6 @@ CREATE TABLE platform_settings (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Insert default delivery radius setting
-INSERT INTO platform_settings (setting_key, setting_value, description)
-VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
-
 -- Row Level Security Policies
 
 -- Users: can only view/update their own profile
@@ -223,7 +222,7 @@ CREATE POLICY "Business owners can manage own time slots" ON time_slots
     )
   );
 
--- Orders: customers view own, business owners view their orders, riders view assigned
+-- Orders: customers view own, business owners view their orders
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Customers can view own orders" ON orders
@@ -235,9 +234,6 @@ CREATE POLICY "Business owners can view their orders" ON orders
       SELECT 1 FROM businesses WHERE id = business_id AND owner_id = auth.uid()
     )
   );
-
-CREATE POLICY "Riders can view assigned orders" ON orders
-  FOR SELECT USING (rider_id = auth.uid());
 
 CREATE POLICY "Admins can manage all orders" ON orders
   FOR ALL USING (
