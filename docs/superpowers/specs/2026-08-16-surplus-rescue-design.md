@@ -6,11 +6,11 @@
 
 ## 1. Overview
 
-Surplus Rescue is a surplus food rescue marketplace web app where restaurants, cafes, bakeries, grocery stores, fresh markets, snack shops, convenience stores, and food producers can post their safe surplus food through secret bags with discount prices within time limits. Customers can order food online with cash on delivery.
+Surplus Rescue is a surplus food rescue marketplace web app where restaurants, cafes, bakeries, grocery stores, fresh markets, snack shops, convenience stores, and food producers can post their safe surplus food through secret bags with discount prices within time limits. Customers can order food online with cash on delivery, choosing between delivery or pickup options.
 
 ### Core Value Proposition
-- **For Businesses:** Reduce food waste, recover costs, attract new customers
-- **For Customers:** Get quality food at steep discounts, reduce environmental impact
+- **For Businesses:** Reduce food waste, recover costs, attract new customers, maintain control over delivery
+- **For Customers:** Get quality food at steep discounts, choose delivery or pickup, reduce environmental impact
 - **For Platform:** Commission-based revenue model with advertising opportunities
 
 ### Target Users
@@ -58,10 +58,7 @@ CREATE TABLE users (
   full_name VARCHAR(255),
   phone VARCHAR(20),
   avatar_url TEXT,
-  role VARCHAR(20) DEFAULT 'customer' CHECK (role IN ('customer', 'business', 'admin', 'rider')),
-  is_available BOOLEAN DEFAULT TRUE,
-  current_latitude DECIMAL(10, 8),
-  current_longitude DECIMAL(11, 8),
+  role VARCHAR(20) DEFAULT 'customer' CHECK (role IN ('customer', 'business', 'admin')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -87,6 +84,11 @@ CREATE TABLE businesses (
   is_verified BOOLEAN DEFAULT FALSE,
   is_active BOOLEAN DEFAULT TRUE,
   commission_rate DECIMAL(5, 2) DEFAULT 12.5,
+  offers_delivery BOOLEAN DEFAULT TRUE,
+  offers_pickup BOOLEAN DEFAULT TRUE,
+  delivery_radius_km DECIMAL(5, 2) DEFAULT 5.0,
+  delivery_fee DECIMAL(10, 2) DEFAULT 0.00,
+  minimum_order_for_delivery DECIMAL(10, 2) DEFAULT 0.00,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -136,9 +138,10 @@ CREATE TABLE orders (
   business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
   mystery_bag_id UUID REFERENCES mystery_bags(id) ON DELETE CASCADE,
   time_slot_id UUID REFERENCES time_slots(id),
-  rider_id UUID REFERENCES users(id),
+  fulfillment_type VARCHAR(20) DEFAULT 'pickup' CHECK (fulfillment_type IN ('delivery', 'pickup')),
   status VARCHAR(30) DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'preparing', 'ready', 'picked_up', 'out_for_delivery', 'delivered', 'cancelled', 'refunded')),
   total_amount DECIMAL(10, 2) NOT NULL,
+  delivery_fee DECIMAL(10, 2) DEFAULT 0.00,
   commission_amount DECIMAL(10, 2) NOT NULL,
   business_payout DECIMAL(10, 2) NOT NULL,
   payment_method VARCHAR(20) DEFAULT 'cash_on_delivery',
@@ -227,17 +230,12 @@ CREATE TABLE platform_settings (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
-
--- Insert default delivery radius setting
-INSERT INTO platform_settings (setting_key, setting_value, description)
-VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
 ```
 
 ### Row Level Security (RLS) Policies
 - Users can only view/update their own profile
 - Business owners can only manage their own businesses and mystery bags
 - Customers can only view their own orders
-- Riders can view orders assigned to them
 - Admins have full access to all tables
 - Public read access for active mystery bags and businesses
 
@@ -245,6 +243,7 @@ VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
 
 ### Customer
 - Browse available mystery bags
+- Choose delivery or pickup option
 - Place orders with cash on delivery
 - Track order status
 - Rate and review businesses and mystery bags
@@ -256,24 +255,19 @@ VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
 - Upload verification documents
 - Create/edit/delete mystery bags
 - Set time slots
+- Configure delivery settings (radius, fee, minimum order)
+- Manage delivery operations (own riders or third-party)
 - View orders and update preparation status
 - Respond to reviews
 - Purchase advertising spots
 - View analytics dashboard
 
-### Rider
-- View assigned delivery orders
-- Update order status (picked up, delivered)
-- View pickup and delivery addresses
-- Navigate to locations
-
 ### Admin
 - Verify business documents
-- Manage all users, businesses, and riders
+- Manage all users and businesses
 - Handle disputes and refunds
 - Manage advertising campaigns
-- Manage delivery operations
-- Configure platform settings (delivery radius, etc.)
+- Configure platform settings
 - View platform analytics
 
 ## 5. Core Features
@@ -285,6 +279,7 @@ VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
 - **Dynamic Pricing:** Business sets original value and selling price (discount %)
 - **Time-Limited:** Available only during specific time slots
 - **Quantity Management:** Track available and sold quantities
+- **Fulfillment Options:** Customers choose between delivery or pickup
 
 ### 5.2 Time Slot Management
 - **Predefined Slots:** 10-11am, 5-6pm, 9-10pm (delivery only)
@@ -294,28 +289,30 @@ VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
 
 ### 5.3 Order Flow
 1. Customer browses mystery bags by category and price range
-2. Selects preferred time slot
-3. Confirms delivery address and notes
-4. Places order (Cash on Delivery)
-5. Platform matches order with available bag from a business
-6. Business receives notification and prepares order
-7. Platform rider picks up order from business
-8. Rider delivers to customer
+2. Customer selects preferred time slots
+3. Customer chooses delivery option: **Delivery** or **Pickup**
+4. If delivery: confirms delivery address and notes
+5. Places order (Cash on Delivery)
+6. Platform matches order with available bag from a business
+7. Business receives notification and prepares order
+8. Business manages delivery (own rider/driver or third-party service)
 9. Customer receives order and pays cash
 10. Order marked delivered
 11. Customer can rate and review the business
 
 ### 5.4 Delivery Management
-- **Platform Delivery:** Platform manages its own delivery riders/drivers for pickup and delivery
-- **Business Role:** Businesses only prepare orders - no delivery management required
-- **Admin-Managed Radius:** Delivery radius managed by platform admin, not individual businesses
-- **Address Validation:** Ensure delivery address is within platform delivery radius
-- **Delivery Instructions:** Customers can add special instructions for riders
+- **Customer Choice:** Customers choose between delivery and pickup at checkout
+- **Business-Managed Delivery:** Businesses manage their own delivery riders/drivers or use third-party delivery services
+- **Business Delivery Radius:** Each business sets their own delivery radius and areas
+- **Pickup Option:** Customers can choose to pick up orders directly from the business
+- **Delivery Instructions:** Customers can add special instructions for delivery
+- **Business Delivery Settings:** Businesses configure delivery fee, minimum order for delivery, and available delivery time slots
 
 ### 5.5 Payment System
 - **Cash on Delivery Only:** No online payment processing
 - **Commission Calculation:** Platform takes 10-15% per order (configurable per business, default 12.5%)
-- **Business Payout:** Calculated after commission deduction
+- **Delivery Fee:** Business sets delivery fee (if offering delivery)
+- **Business Payout:** Calculated after commission and delivery fee deduction
 - **Receipt Generation:** Digital receipts for all transactions
 
 ### 5.6 Review & Rating System
@@ -341,11 +338,10 @@ VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
 - **Business Alerts:** New orders, reviews, document status
 
 ### 5.9 Admin Dashboard
-- **User Management:** View, edit, disable users (including riders)
+- **User Management:** View, edit, disable users
 - **Business Verification:** Review and approve documents
 - **Order Management:** View all orders, handle disputes
-- **Delivery Management:** Assign riders, manage delivery operations
-- **Platform Settings:** Configure delivery radius, commission rates, etc.
+- **Platform Settings:** Configure commission rates, etc.
 - **Analytics:** Platform-wide metrics and reports
 
 ## 6. UI/UX Design
@@ -378,14 +374,16 @@ VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
 - Category and value information
 - Original vs. selling price
 - Available time slots
-- Platform delivery info (not business info)
+- Delivery/Pickup options (based on business settings)
+- Business delivery info (radius, fee)
 - Add to order button
 
 #### Order Checkout
-- Delivery address form
+- Fulfillment type selection (Delivery or Pickup)
+- Delivery address form (if delivery selected)
 - Time slot selection
 - Special requests
-- Order summary
+- Order summary with delivery fee (if applicable)
 - Place order button
 
 #### Order Tracking
@@ -398,22 +396,18 @@ VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
 - Overview analytics
 - Mystery bag management
 - Order preparation management
+- Delivery management (own riders or third-party)
+- Delivery settings (radius, fee, minimum order)
 - Review responses
-- Advertising management
 
-#### Rider Dashboard
-- Assigned deliveries
-- Pickup/delivery addresses
-- Order status updates
-- Navigation integration
 
 #### Admin Dashboard
 - Platform metrics
-- User management (including riders)
+- User management
 - Business verification
+- Advertising management
 - Order disputes
-- Delivery management
-- Platform settings (delivery radius, etc.)
+- Platform settings
 
 ### Components
 - **Navigation:** Sticky header with search, cart, notifications
@@ -428,7 +422,6 @@ VALUES ('delivery_radius_km', '10', 'Maximum delivery radius in kilometers');
 ### Supabase Edge Functions
 - `create-order` - Process new orders and match with available bags
 - `update-order-status` - Update order status
-- `assign-rider` - Assign delivery rider to order
 - `calculate-commission` - Calculate platform commission
 - `send-notification` - Send email/push notifications
 - `verify-document` - Process document verification
@@ -527,7 +520,6 @@ surplus-rescue/
 │   │   ├── (dashboard)/
 │   │   │   ├── business/
 │   │   │   ├── admin/
-│   │   │   ├── rider/
 │   │   │   └── orders/
 │   │   ├── (marketplace)/
 │   │   │   ├── businesses/
@@ -542,7 +534,6 @@ surplus-rescue/
 │   │   ├── marketplace/
 │   │   ├── business/
 │   │   ├── admin/
-│   │   ├── rider/
 │   │   └── shared/
 │   ├── lib/
 │   │   ├── supabase/
